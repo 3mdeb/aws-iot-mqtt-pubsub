@@ -5,7 +5,6 @@ import logging.handlers
 import sys
 import os
 import ssl
-import paho.mqtt.client as mqtt
 import threading
 import time
 import queue
@@ -13,6 +12,8 @@ import urllib.request
 import socket
 import subprocess
 import json
+import RPi.GPIO as GPIO
+import paho.mqtt.client as mqtt
 
 LOG_NAME = 'aws-iot-mqtt-pubsub'
 LOG_LEVEL = logging.DEBUG
@@ -34,6 +35,35 @@ REQUEST_QUEUE_SIZE = 10
 MAX_REQUEST_WAIT_TIME = 10
 HASH_FLAG = 0
 
+class ButtonStateReporter(threading.Thread):
+
+    def __init__(self, mac, log, mqttc):
+        super().__init__()
+        self.log = log
+        self.mqttc = mqttc
+        self.mac = mac
+        self.start()
+
+    def __publish(self, json):
+        self.log.info("json:{1}".format(json))
+        topic = "$aws/things/{0}/shadow/update".format(self.mac)
+        self.mqttc.publish(topic, payload=json)
+
+    def run(self):
+        try:
+            while True:
+                j = {}
+                j['led'] = GPIO.input(7)
+                j['button'] = GPIO.input(11)
+                self.__publish(self.mac, json.dumps(j))
+                time.sleep(10)
+        except:
+            self.log.exception("unable to report led and button info")
+            return
+
+    def end(self):
+        self.log.info("stopping reporter thread")
+        self.running = False
 
 def setup_logger():
     logger = logging.getLogger()
@@ -61,7 +91,7 @@ def on_message(client, userdata, msg):
         j = json.loads(msg.payload.decode())
         if "led" in j.keys():
             log.info("set LED state to: {0}".format(j['led']))
-            set_led_state(j['led'])
+            GPIO.output(7, j['led'])
         else:
             log.info("other command")
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
@@ -109,12 +139,6 @@ def on_log(client, userdata, level, buf):
 def on_publish(client, obj, flags):
     log.info('message published')
 
-def set_led_state(state):
-    import RPi.GPIO as GPIO
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(7, GPIO.OUT)
-    GPIO.output(7, state)
-
 def get_id():
     try:
         if os.path.exists(ETH0_ADDRESS_PATH):
@@ -137,6 +161,11 @@ if __name__ == "__main__":
     setup_logger()
     log = logging.getLogger()
     log.info(" aws-iot-mqtt-pubsub@" + this_id)
+
+    lof.info("setup GPIO")
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(7, GPIO.OUT)
+    GPIO.setup(11, GPIO.IN)
 
     while True:
         try:
@@ -172,11 +201,17 @@ if __name__ == "__main__":
             sys.exit()
 
     try:
+        reporter = ButtonStateReporter(this_id, log, mqttc)
+    except:
+        log.exception("unable to run button state reporter")
+
+    try:
         mqttc.loop_forever()
     except KeyboardInterrupt:
         pass
     try:
         log.info("ending...")
+        reporter.end()
     except:
         log.exception("unable to stop shadow-daemon")
         sys.exit()
