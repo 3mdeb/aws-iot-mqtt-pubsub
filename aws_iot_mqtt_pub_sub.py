@@ -45,7 +45,7 @@ class ButtonStateReporter(threading.Thread):
         self.start()
 
     def __publish(self, json):
-        self.log.info("json:{1}".format(json))
+        self.log.info("json:{0}".format(json))
         topic = "$aws/things/{0}/shadow/update".format(self.mac)
         self.mqttc.publish(topic, payload=json)
 
@@ -53,9 +53,11 @@ class ButtonStateReporter(threading.Thread):
         try:
             while True:
                 j = {}
-                j['led'] = GPIO.input(7)
-                j['button'] = GPIO.input(11)
-                self.__publish(self.mac, json.dumps(j))
+                j["state"] = {}
+                j["state"]["reported"] = {}
+                j["state"]["reported"]["led"] = GPIO.input(7)
+                j["state"]["reported"]["button"] = GPIO.input(11)
+                self.__publish(json.dumps(j))
                 time.sleep(10)
         except:
             self.log.exception("unable to report led and button info")
@@ -89,9 +91,9 @@ def on_message(client, userdata, msg):
         log.info("processing delta message")
         log.info("payload:{0}\n userdata:{1}".format(msg.payload.decode(), userdata))
         j = json.loads(msg.payload.decode())
-        if "led" in j.keys():
-            log.info("set LED state to: {0}".format(j['led']))
-            GPIO.output(7, j['led'])
+        if "led" in j["state"].keys():
+            log.info("set LED state to: {0}".format(j["state"]["led"]))
+            GPIO.output(7, j["state"]["led"])
         else:
             log.info("other command")
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
@@ -162,7 +164,7 @@ if __name__ == "__main__":
     log = logging.getLogger()
     log.info(" aws-iot-mqtt-pubsub@" + this_id)
 
-    lof.info("setup GPIO")
+    log.info("setup GPIO")
     GPIO.setmode(GPIO.BOARD)
     GPIO.setup(7, GPIO.OUT)
     GPIO.setup(11, GPIO.IN)
