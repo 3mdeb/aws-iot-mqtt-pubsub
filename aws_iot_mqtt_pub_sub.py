@@ -12,6 +12,7 @@ import queue
 import urllib.request
 import socket
 import subprocess
+import json
 
 LOG_NAME = 'aws-iot-mqtt-pubsub'
 LOG_LEVEL = logging.DEBUG
@@ -20,7 +21,7 @@ LOG_BACKUPS_COUNT = 5
 ETH0_ADDRESS_PATH = "/sys/class/net/eth0/address"
 
 # netvision endpoint
-AWS_MQTT_HOST = "AYSLMC5EQ4FBO.iot.eu-west-1.amazonaws.com"
+AWS_MQTT_HOST = "A1SW3Q5MUSFA0L.iot.eu-west-1.amazonaws.com"
 
 AWS_MQTT_PORT = 8883
 AWS_MQTT_SHADOW_TOPIC_PREFIX = '$aws/things/'
@@ -57,6 +58,12 @@ def on_message(client, userdata, msg):
             "/shadow/update/delta":
         log.info("processing delta message")
         log.info("payload:{0}\n userdata:{1}".format(msg.payload.decode(), userdata))
+        j = json.loads(msg.payload.decode())
+        if "led" in j.keys():
+            log.info("set LED state to: {0}".format(j['led']))
+            set_led_state(j['led'])
+        else:
+            log.info("other command")
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/accepted":
         log.info("message state accepted")
@@ -102,6 +109,11 @@ def on_log(client, userdata, level, buf):
 def on_publish(client, obj, flags):
     log.info('message published')
 
+def set_led_state(state):
+    import RPi.GPIO as GPIO
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(7, GPIO.OUT)
+    GPIO.output(7, state)
 
 def get_id():
     try:
