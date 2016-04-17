@@ -12,7 +12,6 @@ import queue
 import urllib.request
 import socket
 import subprocess
-from settings import *
 
 LOG_NAME = 'aws-iot-mqtt-pubsub'
 LOG_LEVEL = logging.DEBUG
@@ -38,9 +37,9 @@ HASH_FLAG = 0
 def setup_logger():
     logger = logging.getLogger()
 
-    formatter = logging.Formatter("{0} %(asctime)s [%(levelname)-8s]"
+    formatter = logging.Formatter("%(asctime)s [%(levelname)-8s]"
                                   "%(funcName)s:%(lineno)s "
-                                  "%(message)s".format(VERSION))
+                                  "%(message)s")
 
     file_handler = logging.handlers.RotatingFileHandler(
         "{0}.log".format(LOG_NAME), maxBytes=LOG_SIZE,
@@ -54,14 +53,14 @@ def setup_logger():
 
 def on_message(client, userdata, msg):
     log.info("incoming message (" + msg.topic + ")")
-    if msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata.id + \
+    if msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/delta":
         log.info("processing delta message")
-        log.info("payload:{0}\n userdata:{0}".format(msg.payload.decode(), userdata))
-    elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata.id + \
+        log.info("payload:{0}\n userdata:{1}".format(msg.payload.decode(), userdata))
+    elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/accepted":
         log.info("message state accepted")
-    elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata.id + \
+    elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/rejected":
         log.error("message state rejected. Reason: {0}"
                   .format(str(msg.payload)))
@@ -69,13 +68,13 @@ def on_message(client, userdata, msg):
 
 def on_connect(client, userdata, rc):
     log.info("connection returned result: " + str(rc))
-    topic_delta = AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata.id + \
+    topic_delta = AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
         "/shadow/update/delta"
     log.info("subscribing: {0}".format(topic_delta))
-    topic_update_accepted = AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata.id + \
+    topic_update_accepted = AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
         "/shadow/update/accepted"
     log.info("subscribing: {0}".format(topic_update_accepted))
-    topic_update_rejected = AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata.id + \
+    topic_update_rejected = AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
         "/shadow/update/rejected"
     log.info("subscribing: {0}".format(topic_update_rejected))
     client.subscribe([(topic_delta, 1),
@@ -90,7 +89,6 @@ def on_disconnect(client, userdata, rc):
 def on_subscribe(client, userdata, mid, granted_qos):
     log.info("subscribed. MID = " + str(mid) + ". Granted QoS = " +
              str(granted_qos))
-    commiter.commit_state()
 
 
 def on_unsubscribe(client, userdata, rc):
@@ -123,19 +121,15 @@ def get_id():
 
 if __name__ == "__main__":
 
-    try:
-        this_id = get_id()
-        setup_logger()
-        log = logging.getLogger()
-        log.info(" aws-iot-mqtt-pubsub@" + this_id)
-    except:
-        log.exception("unable to initialize logging system")
+    this_id = get_id()
+    setup_logger()
+    log = logging.getLogger()
+    log.info(" aws-iot-mqtt-pubsub@" + this_id)
 
     while True:
         try:
             urllib.request.urlopen('http://www.google.com', timeout=2)
-            mqttc = mqtt.Client(client_id=this_id, userdata=updater)
-            commiter = CommitStateUpdater(mqttc, log, this_id)
+            mqttc = mqtt.Client(client_id=this_id, userdata=this_id)
             mqttc.on_log = on_log
             mqttc.on_message = on_message
             mqttc.on_connect = on_connect
@@ -171,7 +165,6 @@ if __name__ == "__main__":
         pass
     try:
         log.info("ending...")
-        updater.end()
     except:
         log.exception("unable to stop shadow-daemon")
         sys.exit()
