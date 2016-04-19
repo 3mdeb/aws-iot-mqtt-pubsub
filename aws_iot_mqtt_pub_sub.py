@@ -35,9 +35,14 @@ REQUEST_QUEUE_SIZE = 10
 MAX_REQUEST_WAIT_TIME = 10
 HASH_FLAG = 0
 
+ALARM_PIN = 12
+LOCK_PIN = 7
+RESET_PIN = 13
+WINDOW_PIN = 11
+
 reset_queue = queue.Queue(1)
 
-class ButtonStateReporter(threading.Thread):
+class StateReporter(threading.Thread):
 
     def __init__(self, mac, log, mqttc):
         super().__init__()
@@ -57,12 +62,14 @@ class ButtonStateReporter(threading.Thread):
                 j = {}
                 j["state"] = {}
                 j["state"]["reported"] = {}
-                j["state"]["reported"]["led"] = GPIO.input(7)
-                j["state"]["reported"]["button"] = GPIO.input(11)
+                j["state"]["reported"]["lock"] = GPIO.input(LOCK_PIN)
+                j["state"]["reported"]["alarm"] = GPIO.input(ALARM_PIN)
+                j["state"]["reported"]["reset"] = GPIO.input(RESET_PIN)
+                j["state"]["reported"]["window"] = GPIO.input(WINDOW_PIN)
                 self.__publish(json.dumps(j))
-                time.sleep(10)
+                time.sleep(5)
         except:
-            self.log.exception("unable to report led and button info")
+            self.log.exception("unable to report state")
             return
 
     def end(self):
@@ -87,22 +94,24 @@ def setup_logger():
 
 
 def on_message(client, userdata, msg):
-    log.info("incoming message (" + msg.topic + ")")
+    # log.info("incoming message (" + msg.topic + ")")
     if msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/delta":
         log.info("processing delta message")
         log.info("payload:{0}\n userdata:{1}".format(msg.payload.decode(), userdata))
         j = json.loads(msg.payload.decode())
-        if "led" in j["state"].keys():
-            log.info("set LED state to: {0}".format(j["state"]["led"]))
-            GPIO.output(7, j["state"]["led"])
+        if "lock" in j["state"].keys():
+            log.info("set LED state to: {0}".format(j["state"]["lock"]))
+            GPIO.output(LOCK_PIN, j["state"]["lock"])
         if "reset" in j["state"].keys():
-            log.debug("reset alarm")
-            reset_queue.put(False)
+            if j["state"]["reset"] and reset_queue.qsize() == 0:
+                log.debug("reset alarm")
+                reset_queue.put(False)
 
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/accepted":
-        log.info("message state accepted")
+        # log.info("message state accepted")
+        pass
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/rejected":
         log.error("message state rejected. Reason: {0}"
@@ -139,11 +148,13 @@ def on_unsubscribe(client, userdata, rc):
 
 
 def on_log(client, userdata, level, buf):
-    log.info("buf: {0} - {1}".format(str(level), buf))
+    # log.debug("buf: {0} - {1}".format(str(level), buf))
+    pass
 
 
 def on_publish(client, obj, flags):
-    log.info('message published')
+    # log.debug('message published')
+    pass
 
 def get_id():
     try:
@@ -164,13 +175,20 @@ def get_id():
 def alarm(channel):
     log.info("channel {0}".format(channel))
     reset_state = True
+    time.sleep(0.25)
+    if GPIO.input(WINDOW_PIN):
+       return
     while (reset_state):
-        GPIO.output(12, True)
-        time.sleep(1)
-        GPIO.output(12, True)
+        GPIO.output(ALARM_PIN, True)
+        time.sleep(0.5)
+        GPIO.output(ALARM_PIN, False)
+        time.sleep(0.5)
         try:
-            reset_state = reset_queue.get()
-        except Empty:
+            log.info("queue before {0}".format(reset_queue.qsize()))
+            reset_state = reset_queue.get_nowait()
+            log.info("queue after {0}".format(reset_queue.qsize()))
+            log.info("reset_state: {0}".format(reset_state))
+        except queue.Empty:
             log.debug("queue empty")
 
 
@@ -183,9 +201,12 @@ if __name__ == "__main__":
 
     log.info("setup GPIO")
     GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(7, GPIO.OUT)
-    GPIO.setup(11, GPIO.IN)
-    GPIO.setup(12, GPIO.OUT)
+    GPIO.setup(LOCK_PIN, GPIO.OUT)
+    GPIO.setup(WINDOW_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    GPIO.setup(ALARM_PIN, GPIO.OUT)
+    GPIO.setup(RESET_PIN, GPIO.OUT)
+    GPIO.setup(16, GPIO.OUT)
+    GPIO.output(16, True)
     GPIO.add_event_detect(11, GPIO.FALLING, callback=alarm)
 
     while True:
@@ -222,14 +243,17 @@ if __name__ == "__main__":
             sys.exit()
 
     try:
-        reporter = ButtonStateReporter(this_id, log, mqttc)
+        reporter = StateReporter(this_id, log, mqttc)
     except:
-        log.exception("unable to run button state reporter")
+        log.exception("unable to run state reporter")
 
     try:
         mqttc.loop_forever()
     except KeyboardInterrupt:
-        pass
+        GPIO.output(LOCK_PIN, False)
+        GPIO.output(ALARM_PIN, False)
+        GPIO.output(RESET_PIN, False)
+
     try:
         log.info("ending...")
         reporter.end()
