@@ -35,9 +35,9 @@ REQUEST_QUEUE_SIZE = 10
 MAX_REQUEST_WAIT_TIME = 10
 HASH_FLAG = 0
 
-ALARM_PIN = 12
+ALARM_LED_PIN = 12
 LOCK_PIN = 7
-RESET_PIN = 13
+ALARM_PIN = 13
 WINDOW_PIN = 11
 
 reset_queue = queue.Queue(1)
@@ -49,6 +49,8 @@ class StateReporter(threading.Thread):
         self.log = log
         self.mqttc = mqttc
         self.mac = mac
+        global alarm_reset
+        alarm_reset = 0
         self.start()
 
     def __publish(self, json):
@@ -64,7 +66,7 @@ class StateReporter(threading.Thread):
                 j["state"]["reported"] = {}
                 j["state"]["reported"]["lock"] = GPIO.input(LOCK_PIN)
                 j["state"]["reported"]["alarm"] = GPIO.input(ALARM_PIN)
-                j["state"]["reported"]["reset"] = GPIO.input(RESET_PIN)
+                j["state"]["reported"]["alarm_reset"] = alarm_reset
                 j["state"]["reported"]["window"] = GPIO.input(WINDOW_PIN)
                 self.__publish(json.dumps(j))
                 time.sleep(5)
@@ -103,10 +105,15 @@ def on_message(client, userdata, msg):
         if "lock" in j["state"].keys():
             log.info("set LED state to: {0}".format(j["state"]["lock"]))
             GPIO.output(LOCK_PIN, j["state"]["lock"])
-        if "reset" in j["state"].keys():
-            if j["state"]["reset"] and reset_queue.qsize() == 0:
+        if "alarm_reset" in j["state"].keys():
+            if j["state"]["alarm_reset"] == 1 and reset_queue.qsize() == 0:
                 log.debug("reset alarm")
+                global alarm_reset
+                alarm_reset = 1
                 reset_queue.put(False)
+            else:
+                global alarm_reset
+                alarm_reset = 0
 
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/accepted":
@@ -175,21 +182,23 @@ def get_id():
 def alarm(channel):
     log.info("channel {0}".format(channel))
     reset_state = True
+    if not GPIO.input(LOCK_PIN):
+        log.info("LOCK_PIN is low - we don't care about alarm")
+        return
     time.sleep(0.25)
     if GPIO.input(WINDOW_PIN):
        return
+    GPIO.output(ALARM_PIN, True)
     while (reset_state):
-        GPIO.output(ALARM_PIN, True)
+        GPIO.output(ALARM_LED_PIN, True)
         time.sleep(0.5)
-        GPIO.output(ALARM_PIN, False)
+        GPIO.output(ALARM_LED_PIN, False)
         time.sleep(0.5)
         try:
-            log.info("queue before {0}".format(reset_queue.qsize()))
             reset_state = reset_queue.get_nowait()
-            log.info("queue after {0}".format(reset_queue.qsize()))
-            log.info("reset_state: {0}".format(reset_state))
         except queue.Empty:
-            log.debug("queue empty")
+            continue
+    GPIO.output(ALARM_PIN, False)
 
 
 if __name__ == "__main__":
@@ -203,10 +212,12 @@ if __name__ == "__main__":
     GPIO.setmode(GPIO.BOARD)
     GPIO.setup(LOCK_PIN, GPIO.OUT)
     GPIO.setup(WINDOW_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    GPIO.setup(ALARM_LED_PIN, GPIO.OUT)
     GPIO.setup(ALARM_PIN, GPIO.OUT)
-    GPIO.setup(RESET_PIN, GPIO.OUT)
     GPIO.setup(16, GPIO.OUT)
     GPIO.output(16, True)
+    GPIO.output(ALARM_PIN, False)
+    GPIO.output(ALARM_LED_PIN, False)
     GPIO.add_event_detect(11, GPIO.FALLING, callback=alarm)
 
     while True:
@@ -251,8 +262,8 @@ if __name__ == "__main__":
         mqttc.loop_forever()
     except KeyboardInterrupt:
         GPIO.output(LOCK_PIN, False)
+        GPIO.output(ALARM_LED_PIN, False)
         GPIO.output(ALARM_PIN, False)
-        GPIO.output(RESET_PIN, False)
 
     try:
         log.info("ending...")
