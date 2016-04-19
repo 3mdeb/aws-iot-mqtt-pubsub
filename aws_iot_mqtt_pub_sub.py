@@ -35,6 +35,8 @@ REQUEST_QUEUE_SIZE = 10
 MAX_REQUEST_WAIT_TIME = 10
 HASH_FLAG = 0
 
+reset_queue = queue.Queue(1)
+
 class ButtonStateReporter(threading.Thread):
 
     def __init__(self, mac, log, mqttc):
@@ -94,8 +96,10 @@ def on_message(client, userdata, msg):
         if "led" in j["state"].keys():
             log.info("set LED state to: {0}".format(j["state"]["led"]))
             GPIO.output(7, j["state"]["led"])
-        else:
-            log.info("other command")
+        if "reset" in j["state"].keys():
+            log.debug("reset alarm")
+            reset_queue.put(False)
+
     elif msg.topic == AWS_MQTT_SHADOW_TOPIC_PREFIX + userdata + \
             "/shadow/update/accepted":
         log.info("message state accepted")
@@ -157,6 +161,19 @@ def get_id():
     else:
         return address.strip()
 
+def alarm(channel):
+    log.info("channel {0}".format(channel))
+    reset_state = True
+    while (reset_state):
+        GPIO.output(12, True)
+        time.sleep(1)
+        GPIO.output(12, True)
+        try:
+            reset_state = reset_queue.get()
+        except Empty:
+            log.debug("queue empty")
+
+
 if __name__ == "__main__":
 
     this_id = get_id()
@@ -168,6 +185,8 @@ if __name__ == "__main__":
     GPIO.setmode(GPIO.BOARD)
     GPIO.setup(7, GPIO.OUT)
     GPIO.setup(11, GPIO.IN)
+    GPIO.setup(12, GPIO.OUT)
+    GPIO.add_event_detect(11, GPIO.FALLING, callback=alarm)
 
     while True:
         try:
